@@ -144,9 +144,9 @@ function is_shallow(space::DataType)::Bool
     return all(value -> !(value isa Space), values(dimensions(space)))
 end
 
-function ==(space1::T, space2::T)::Bool where {T <: DataType}
+function ==(space1::DataType, space2::DataType)::Bool
     if !isspace(space1) || !isspace(space2)
-        error("Spaces were not provided")
+        return invoke(==, Tuple{Type, Type}, space1, space2)
     end
 
     return is_equivalent(space1, space2)
