@@ -1,6 +1,8 @@
 # Import necessary packages
 using Graphs
-using GraphPlot
+using GraphRecipes
+using Plots
+using Compose  # Add this import
 
 # Define type aliases for clarity
 const InputType = Dict{String, Any}
@@ -51,11 +53,11 @@ end
 # Function to select a component from a schema using a path
 function select_component(schema::CompositeType, path::Vector{String})
     current = schema
-    for key in path
-        if current isa CompositeType && key in keys(current.components)
-            current = current.components[key]
+    for component in path
+        if haskey(current.components, component)
+            current = current.components[component]
         else
-            error("Key $(key) not found in schema at path $(path).")
+            return nothing  # Component not found
         end
     end
     return current
@@ -77,32 +79,40 @@ function combine_schemas(name::String, schemas::Vector{CompositeType})
 end
 
 # Function to check if two schemas are congruent
-function schemas_are_congruent(schema1::CompositeType, schema2::CompositeType)::Bool
-    # Check if the component keys match
-    if keys(schema1.components) != keys(schema2.components)
-        return false
-    end
-    # Recursively check each component
-    for key in keys(schema1.components)
-        comp1 = schema1.components[key]
-        comp2 = schema2.components[key]
-        if comp1 isa CompositeType && comp2 isa CompositeType
-            if !schemas_are_congruent(comp1, comp2)
-                return false
-            end
-        elseif comp1 isa BaseType && comp2 isa BaseType
-            if comp1.name != comp2.name
-                return false
-            end
-            # Check operations and constraints
-            if comp1.operations != comp2.operations || comp1.constraints != comp2.constraints
-                return false
-            end
-        else
+function schemas_are_congruent(schema1::TypeCategory, schema2::TypeCategory)::Bool
+    if schema1 isa CompositeType && schema2 isa CompositeType
+        # Check if the component keys match
+        if keys(schema1.components) != keys(schema2.components)
             return false
         end
+        # Recursively check each component
+        for key in keys(schema1.components)
+            comp1 = schema1.components[key]
+            comp2 = schema2.components[key]
+            if comp1 isa CompositeType && comp2 isa CompositeType
+                if !schemas_are_congruent(comp1, comp2)
+                    return false
+                end
+            elseif comp1 isa BaseType && comp2 isa BaseType
+                if comp1.name != comp2.name
+                    return false
+                end
+                # Check operations and constraints
+                if comp1.operations != comp2.operations || comp1.constraints != comp2.constraints
+                    return false
+                end
+            else
+                return false
+            end
+        end
+        return true
+    elseif schema1 isa BaseType && schema2 isa BaseType
+        return schema1.name == schema2.name &&
+               schema1.operations == schema2.operations &&
+               schema1.constraints == schema2.constraints
+    else
+        return false  # A BaseType and a CompositeType are never congruent
     end
-    return true
 end
 
 # Function to create an identity block for a given schema
@@ -231,39 +241,62 @@ end
 
 # Function to visualize a schema
 function visualize_schema(schema::CompositeType)
-    g = Graph()
-    node_labels = Dict{Int, String}()
-    node_counter = Ref(1)  # Use a Ref to allow modification in inner function
+    g = SimpleGraph()
+    node_labels = String[]
+    node_counter = Ref(0)
 
     # Recursive function to add nodes and edges
     function add_nodes(s::TypeCategory, parent_node::Int)
-        current_node = node_counter[]
         node_counter[] += 1
+        current_node = node_counter[]
+        add_vertex!(g)
+
         if s isa CompositeType
-            node_labels[current_node] = s.name
+            push!(node_labels, s.name)
             if parent_node != 0
                 add_edge!(g, parent_node, current_node)
             end
+            println("Added CompositeType node: $(s.name)")
             for (key, component) in s.components
                 child_node = add_nodes(component, current_node)
-                # Edge added within recursive call
+                println("Added edge: $(current_node) -> $(child_node)")
             end
         elseif s isa BaseType
-            node_labels[current_node] = s.name
+            push!(node_labels, s.name)
             if parent_node != 0
                 add_edge!(g, parent_node, current_node)
             end
+            println("Added BaseType node: $(s.name)")
+        else
+            println("Unknown type encountered: $(typeof(s))")
         end
         return current_node
     end
 
     root_node = add_nodes(schema, 0)
 
-    if nv(g) > 0  # Only plot if the graph is not empty
+    println("Graph summary:")
+    println("Number of vertices: $(nv(g))")
+    println("Number of edges: $(ne(g))")
+    println("Node labels: $node_labels")
+
+    if nv(g) > 0
         # Plot the graph
-        gplot(g, nodelabel=node_labels)
+        plt = graphplot(g, 
+            names=node_labels, 
+            nodeshape=:circle, 
+            nodecolor=:lightblue, 
+            nodesize=0.2,
+            fontsize=10,
+            linecolor=:gray,
+            arrows=true
+        )
+        savefig(plt, "schema_visualization.png")
+        println("Graph visualization saved as 'schema_visualization.png'")
+        return true
     else
         println("The schema graph is empty.")
+        return false
     end
 end
 
@@ -465,8 +498,130 @@ blocks = [composed_block]
 simulate_system(blocks, initial_inputs, time_steps)
 
 # Visualize the control block's domain schema
+println("\nVisualizing control block's domain schema:")
 try
-    visualize_schema(control_block.domain)
+    result = visualize_schema(control_block.domain)
+    if !result
+        println("Visualization failed: empty graph")
+    else
+        println("Visualization successful")
+    end
 catch e
     println("Error during schema visualization: ", e)
+    println(stacktrace(catch_backtrace()))
 end
+
+# Additionally, let's print out the structure of the control block's domain
+println("\nControl block domain structure:")
+function print_schema_structure(schema::CompositeType, indent="")
+    println(indent, schema.name)
+    for (key, component) in schema.components
+        if component isa CompositeType
+            print_schema_structure(component, indent * "  ")
+        else
+            println(indent * "  ", key, ": ", component.name)
+        end
+    end
+end
+print_schema_structure(control_block.domain)
+
+# Membership morphism
+function is_member(schema::CompositeType, component::TypeCategory)::Bool
+    for (_, value) in schema.components
+        if value == component || (value isa CompositeType && is_member(value, component))
+            return true
+        end
+    end
+    return false
+end
+
+# Similarity morphism
+function similarity(schema1::CompositeType, schema2::CompositeType)::Float64
+    common_components = 0
+    total_components = length(schema1.components) + length(schema2.components)
+    
+    for (key, value) in schema1.components
+        if haskey(schema2.components, key) && typeof(schema2.components[key]) == typeof(value)
+            common_components += 2  # Count for both schemas
+        end
+    end
+    
+    return common_components / total_components
+end
+
+# Composition of morphisms in nested schemas
+function compose_schema_morphisms(f::Function, g::Function)
+    return x -> g(f(x))
+end
+
+# Example usage:
+# select_and_check = compose_schema_morphisms(
+#     schema -> select_component(schema, ["path", "to", "component"]),
+#     schema -> schemas_are_congruent(schema, some_reference_schema)
+# )
+
+# Functorial mapping τ: D → S
+function tau(schema::CompositeType)::Block
+    # Create a simple identity operation for the block
+    function identity_operation(input::InputType, state::StateType, time::Float64)::Tuple{OutputType, StateType}
+        return input, state
+    end
+    
+    # Create ports and terminals based on schema components
+    ports = Dict(key => Port(key, value) for (key, value) in schema.components)
+    terminals = Dict(key => Terminal(key, value) for (key, value) in schema.components)
+    
+    # Create the block
+    block = Block(
+        "Block_" * schema.name,
+        schema,
+        schema,  # Input and output schemas are the same for an identity block
+        ports,
+        terminals,
+        identity_operation,
+        Dict()  # Empty initial state
+    )
+    
+    # Ensure congruence preservation
+    @assert schemas_are_congruent(schema, block.domain) "Congruence not preserved in τ mapping"
+    @assert schemas_are_congruent(schema, block.codomain) "Congruence not preserved in τ mapping"
+    
+    return block
+end
+
+# Inverse functor τ⁻¹: S → D (if possible)
+function tau_inverse(block::Block)::CompositeType
+    return block.domain  # Assuming the domain represents the schema
+end
+
+# Test the new implementations
+println("\nTesting new category theory implementations:")
+
+# Test membership morphism
+println("Membership test: ", is_member(input_and_state_schema, real_type))
+
+# Test similarity morphism
+println("Similarity test: ", similarity(input_schema, state_schema))
+
+# Test functorial mapping
+mapped_block = tau(input_and_state_schema)
+println("Mapped block: ", mapped_block.name)
+
+# Test inverse mapping
+recovered_schema = tau_inverse(mapped_block)
+println("Recovered schema: ", recovered_schema.name)
+
+# Test composition of morphisms
+composed_morphism = compose_schema_morphisms(
+    schema -> select_component(schema, ["sensor1"]),
+    schema -> begin
+        if schema isa CompositeType
+            schemas_are_congruent(schema, input_schema) ? schema : nothing
+        else
+            schema  # Return the schema as-is if it's not a CompositeType
+        end
+    end
+)
+result = composed_morphism(input_and_state_schema)
+println("Composed morphism result: ", result isa TypeCategory ? result.name : result)
+
