@@ -317,7 +317,7 @@ ylabel!("Y")
 title!("Homicidal Chauffeur Pursuit-Evasion (Discrete-Time with GDS)")
 
 # Save the plot as a PNG file
-savefig("homicidal_chauffeur_plot_gds1.png")
+savefig("2_pursuit_evasion_plot_gds1.png")
 
-println("Simulation completed. Plot saved as 'homicidal_chauffeur_plot_gds1.png'")
+println("Simulation completed. Plot saved as '2_pursuit_evasion_plot_gds1.png'")
 
